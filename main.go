@@ -3,11 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
 
 	"github.com/gobwas/glob"
+	"github.com/yeka/zip"
 )
 
 type FileInfo struct {
@@ -130,6 +132,38 @@ func saveOutput(files []string, currentDir string, outputDir string, overwrite b
 	return nil
 }
 
+func saveZip(files []string, currentDir string, outputZipPath string, encPass string) error {
+	err := os.MkdirAll(path.Dir(outputZipPath), os.ModePerm)
+	if err != nil {
+		return err
+	}
+	fzip, err := os.Create(outputZipPath)
+	if err != nil {
+		return err
+	}
+	zipw := zip.NewWriter(fzip)
+	defer zipw.Close()
+	for _, filePath := range files {
+		relativePath := strings.TrimPrefix(filePath, currentDir)
+		w, err := zipw.Encrypt(relativePath, encPass, zip.AES256Encryption)
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(filePath)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(w, f)
+		if err != nil {
+			return err
+		}
+		f.Close()
+	}
+	zipw.Flush()
+
+	return nil
+}
+
 var defaultAcceptPatterns = []string{
 	"**/.env*",
 	"**/config.yaml",
@@ -157,9 +191,15 @@ func main() {
 	targetDir := flag.String("t", ".", "target directory to scan")
 	ignorePatterns := flag.String("i", "", "comma-separated glob patterns to ignore")
 	acceptPatterns := flag.String("a", "", "comma-separated glob patterns to accept")
-	outputDir := flag.String("o", "", "output directory")
-	overwrite := flag.Bool("w", false, "overwrite existing files")
+	outputFile := flag.String("o", "", "output file")
+	encryptionPass := flag.String("p", "", "encryption password for zip file")
+	// overwrite := flag.Bool("w", false, "overwrite existing files")
 	flag.Parse()
+
+	if *outputFile == "" || *encryptionPass == "" || *targetDir == "" {
+		println("Error: output file and encryption password must be provided")
+		return
+	}
 
 	ignoreList := defaultIgnorePatterns
 	if *ignorePatterns != "" {
@@ -186,7 +226,9 @@ func main() {
 		println("Error:", err.Error())
 		return
 	}
-	err = saveOutput(files, *targetDir, *outputDir, *overwrite)
+
+	// err = saveOutput(files, *targetDir, *outputDir, *overwrite)
+	err = saveZip(files, *targetDir, *outputFile, *encryptionPass)
 	if err != nil {
 		println("Error:", err.Error())
 		return
